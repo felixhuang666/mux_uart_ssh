@@ -47,11 +47,10 @@ class TcpClient:
             logging.debug(f"Client writer error {self.peername}: {e}")
 
 class UartTcpMultiplexer:
-    def __init__(self, uart_port, tcp_port, baudrate=115200, remove_return_char=False, telnet=False):
+    def __init__(self, uart_port, tcp_port=23, baudrate=115200, telnet=True):
         self.uart_port = uart_port
         self.tcp_port = tcp_port
         self.baudrate = baudrate
-        self.remove_return_char = remove_return_char
         self.telnet = telnet
         self.serial = None
         self.clients = set()
@@ -115,12 +114,6 @@ class UartTcpMultiplexer:
                 data = await reader.read(4096)
                 if not data:
                     break
-
-                if self.remove_return_char:
-                    data = data.replace(b'\r', b'')
-
-                if not data:
-                    continue
 
                 logging.debug(f"TCP -> UART [{client.peername}]: {repr(data)}")
                 # TCP -> UART
@@ -253,12 +246,11 @@ async def main():
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument("uart_port", nargs="?", help="UART port (e.g., COM42 or /dev/ttyUSB0)")
-    parser.add_argument("tcp_port", nargs="?", type=int, help="TCP listen port (e.g., 5555)")
+    parser.add_argument("tcp_port", nargs="?", type=int, default=23, help="TCP listen port (default: 23)")
     parser.add_argument("--list", action="store_true", help="List available serial ports and exit")
     parser.add_argument("--baud", type=int, default=115200, help="UART baudrate (default: 115200)")
     parser.add_argument("--debug", action="store_true", help="Enable debug logging to print input characters")
-    parser.add_argument("--remove_return_char", action="store_true", help="Remove '\r' from TCP input")
-    parser.add_argument("--telnet", action="store_true", help="Send Telnet negotiation to force character mode")
+    parser.add_argument("--no-telnet", action="store_true", help="Disable Telnet negotiation (sent by default)")
 
     args = parser.parse_args()
 
@@ -273,7 +265,7 @@ async def main():
         parser.print_help()
         sys.exit(1)
 
-    mux = UartTcpMultiplexer(args.uart_port, args.tcp_port, baudrate=args.baud, remove_return_char=args.remove_return_char, telnet=args.telnet)
+    mux = UartTcpMultiplexer(args.uart_port, args.tcp_port, baudrate=args.baud, telnet=not args.no_telnet)
 
     try:
         await mux.start()
