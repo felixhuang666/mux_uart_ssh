@@ -103,17 +103,31 @@ class UartTcpMultiplexer:
         self.clients.add(client)
         client.write_task = asyncio.create_task(client.start_writer())
 
-        # Send Telnet negotiation to force character mode (disable line buffering and local echo)
-        # IAC WILL ECHO, IAC WILL SGA, IAC DO SGA
+        iac_task = None
         if self.telnet:
-            telnet_init = b'\xff\xfb\x01\xff\xfb\x03\xff\xfd\x03'
-            client.queue.put_nowait(telnet_init)
+            async def send_iac_delayed():
+                try:
+                    await asyncio.sleep(2)
+                    telnet_init = b'\xff\xfb\x01\xff\xfb\x03\xff\xfd\x03'
+                    client.queue.put_nowait(telnet_init)
+                    logging.debug(f"Sent IAC negotiation to [{client.peername}]")
+                except asyncio.CancelledError:
+                    logging.debug(f"Cancelled IAC negotiation to [{client.peername}]")
+            iac_task = asyncio.create_task(send_iac_delayed())
 
         try:
+            import re
+            printable_pattern = re.compile(b'[a-zA-Z0-9\r\n]')
             while self.running:
                 data = await reader.read(4096)
                 if not data:
                     break
+
+                # If we received printable chars within the first 2s, cancel IAC
+                if iac_task and not iac_task.done():
+                    if printable_pattern.search(data):
+                        iac_task.cancel()
+                        logging.debug(f"Batch mode detected, cancelling IAC for [{client.peername}]")
 
                 logging.debug(f"TCP -> UART [{client.peername}]: {repr(data)}")
                 # TCP -> UART
@@ -123,6 +137,8 @@ class UartTcpMultiplexer:
         except Exception as e:
             logging.error(f"Error handling client {client.peername}: {e}")
         finally:
+            if 'iac_task' in locals() and iac_task and not iac_task.done():
+                iac_task.cancel()
             logging.info(f"Client disconnected: {client.peername}")
             self.clients.discard(client)
             if client.write_task:
