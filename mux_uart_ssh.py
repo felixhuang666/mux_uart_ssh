@@ -47,11 +47,12 @@ class TcpClient:
             logging.debug(f"Client writer error {self.peername}: {e}")
 
 class UartTcpMultiplexer:
-    def __init__(self, uart_port, tcp_port, baudrate=115200, remove_return_char=False):
+    def __init__(self, uart_port, tcp_port, baudrate=115200, remove_return_char=False, telnet=False):
         self.uart_port = uart_port
         self.tcp_port = tcp_port
         self.baudrate = baudrate
         self.remove_return_char = remove_return_char
+        self.telnet = telnet
         self.serial = None
         self.clients = set()
         self.running = False
@@ -102,6 +103,12 @@ class UartTcpMultiplexer:
 
         self.clients.add(client)
         client.write_task = asyncio.create_task(client.start_writer())
+
+        # Send Telnet negotiation to force character mode (disable line buffering and local echo)
+        # IAC WILL ECHO, IAC WILL SGA, IAC DO SGA
+        if self.telnet:
+            telnet_init = b'\xff\xfb\x01\xff\xfb\x03\xff\xfd\x03'
+            client.queue.put_nowait(telnet_init)
 
         try:
             while self.running:
@@ -251,6 +258,7 @@ async def main():
     parser.add_argument("--baud", type=int, default=115200, help="UART baudrate (default: 115200)")
     parser.add_argument("--debug", action="store_true", help="Enable debug logging to print input characters")
     parser.add_argument("--remove_return_char", action="store_true", help="Remove '\r' from TCP input")
+    parser.add_argument("--telnet", action="store_true", help="Send Telnet negotiation to force character mode")
 
     args = parser.parse_args()
 
@@ -265,7 +273,7 @@ async def main():
         parser.print_help()
         sys.exit(1)
 
-    mux = UartTcpMultiplexer(args.uart_port, args.tcp_port, baudrate=args.baud, remove_return_char=args.remove_return_char)
+    mux = UartTcpMultiplexer(args.uart_port, args.tcp_port, baudrate=args.baud, remove_return_char=args.remove_return_char, telnet=args.telnet)
 
     try:
         await mux.start()
