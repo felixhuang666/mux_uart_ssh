@@ -47,10 +47,11 @@ class TcpClient:
             logging.debug(f"Client writer error {self.peername}: {e}")
 
 class UartTcpMultiplexer:
-    def __init__(self, uart_port, tcp_port, baudrate=115200):
+    def __init__(self, uart_port, tcp_port, baudrate=115200, remove_return_char=False):
         self.uart_port = uart_port
         self.tcp_port = tcp_port
         self.baudrate = baudrate
+        self.remove_return_char = remove_return_char
         self.serial = None
         self.clients = set()
         self.running = False
@@ -107,6 +108,13 @@ class UartTcpMultiplexer:
                 data = await reader.read(4096)
                 if not data:
                     break
+
+                if self.remove_return_char:
+                    data = data.replace(b'\r', b'')
+
+                if not data:
+                    continue
+
                 logging.debug(f"TCP -> UART [{client.peername}]: {repr(data)}")
                 # TCP -> UART
                 await self._write_to_uart(data)
@@ -242,6 +250,7 @@ async def main():
     parser.add_argument("--list", action="store_true", help="List available serial ports and exit")
     parser.add_argument("--baud", type=int, default=115200, help="UART baudrate (default: 115200)")
     parser.add_argument("--debug", action="store_true", help="Enable debug logging to print input characters")
+    parser.add_argument("--remove_return_char", action="store_true", help="Remove '\r' from TCP input")
 
     args = parser.parse_args()
 
@@ -256,7 +265,7 @@ async def main():
         parser.print_help()
         sys.exit(1)
 
-    mux = UartTcpMultiplexer(args.uart_port, args.tcp_port, baudrate=args.baud)
+    mux = UartTcpMultiplexer(args.uart_port, args.tcp_port, baudrate=args.baud, remove_return_char=args.remove_return_char)
 
     try:
         await mux.start()
