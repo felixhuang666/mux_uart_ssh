@@ -107,6 +107,7 @@ class UartTcpMultiplexer:
                 data = await reader.read(4096)
                 if not data:
                     break
+                logging.debug(f"TCP -> UART [{client.peername}]: {repr(data)}")
                 # TCP -> UART
                 await self._write_to_uart(data)
         except ConnectionResetError:
@@ -142,6 +143,7 @@ class UartTcpMultiplexer:
                     # Read using executor to avoid blocking the event loop
                     data = await asyncio.to_thread(self._read_serial_data)
                     if data:
+                        logging.debug(f"UART -> TCP: {repr(data)}")
                         await self._broadcast_to_clients(data)
                 except serial.SerialException as e:
                     logging.error(f"UART connection lost: {e}")
@@ -239,8 +241,12 @@ async def main():
     parser.add_argument("tcp_port", nargs="?", type=int, help="TCP listen port (e.g., 5555)")
     parser.add_argument("--list", action="store_true", help="List available serial ports and exit")
     parser.add_argument("--baud", type=int, default=115200, help="UART baudrate (default: 115200)")
+    parser.add_argument("--debug", action="store_true", help="Enable debug logging to print input characters")
 
     args = parser.parse_args()
+
+    if args.debug:
+        logging.getLogger().setLevel(logging.DEBUG)
 
     if args.list or (not args.uart_port and not args.tcp_port):
         list_ports()
