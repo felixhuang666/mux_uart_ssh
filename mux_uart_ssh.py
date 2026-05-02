@@ -118,6 +118,10 @@ class UartTcpMultiplexer:
         try:
             import re
             printable_pattern = re.compile(b'[a-zA-Z0-9\r\n]')
+            # Match IAC (0xFF) followed by DO/DONT/WILL/WONT (0xFB-0xFE) and an option byte,
+            # OR IAC followed by a single command byte.
+            iac_pattern = re.compile(b'\xff(?:[\xfb-\xfe].|[\xf0-\xfa])', re.DOTALL)
+
             while self.running:
                 data = await reader.read(4096)
                 if not data:
@@ -128,6 +132,16 @@ class UartTcpMultiplexer:
                     if printable_pattern.search(data):
                         iac_task.cancel()
                         logging.debug(f"Batch mode detected, cancelling IAC for [{client.peername}]")
+
+                # Filter out Telnet IAC sequences from client to UART
+                if self.telnet and b'\xff' in data:
+                    filtered_data = iac_pattern.sub(b'', data)
+                    if data != filtered_data:
+                        logging.debug(f"Stripped IAC commands from TCP input. Original: {repr(data)}, Stripped: {repr(filtered_data)}")
+                    data = filtered_data
+
+                if not data:
+                    continue
 
                 logging.debug(f"TCP -> UART [{client.peername}]: {repr(data)}")
                 # TCP -> UART
