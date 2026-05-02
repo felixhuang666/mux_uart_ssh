@@ -118,9 +118,16 @@ class UartTcpMultiplexer:
         try:
             import re
             printable_pattern = re.compile(b'[a-zA-Z0-9\r\n]')
-            # Match IAC (0xFF) followed by DO/DONT/WILL/WONT (0xFB-0xFE) and an option byte,
-            # OR IAC followed by a single command byte.
-            iac_pattern = re.compile(b'\xff(?:[\xfb-\xfe].|[\xf0-\xfa])', re.DOTALL)
+
+            # Telnet state machine constants
+            STATE_NORMAL = 0
+            STATE_IAC = 1
+            STATE_DO = 2
+            STATE_DONT = 3
+            STATE_WILL = 4
+            STATE_WONT = 5
+
+            telnet_state = STATE_NORMAL
 
             while self.running:
                 data = await reader.read(4096)
@@ -133,12 +140,39 @@ class UartTcpMultiplexer:
                         iac_task.cancel()
                         logging.debug(f"Batch mode detected, cancelling IAC for [{client.peername}]")
 
-                # Filter out Telnet IAC sequences from client to UART
-                if self.telnet and b'\xff' in data:
-                    filtered_data = iac_pattern.sub(b'', data)
-                    if data != filtered_data:
-                        logging.debug(f"Stripped IAC commands from TCP input. Original: {repr(data)}, Stripped: {repr(filtered_data)}")
-                    data = filtered_data
+                # Filter and handle Telnet IAC sequences from client to UART
+                if self.telnet:
+                    filtered_data = bytearray()
+                    for byte in data:
+                        if telnet_state == STATE_NORMAL:
+                            if byte == 255:  # IAC
+                                telnet_state = STATE_IAC
+                            else:
+                                filtered_data.append(byte)
+                        elif telnet_state == STATE_IAC:
+                            if byte == 255:  # IAC IAC -> escaped 255 data byte
+                                filtered_data.append(255)
+                                telnet_state = STATE_NORMAL
+                            elif byte == 253:  # DO
+                                telnet_state = STATE_DO
+                            elif byte == 254:  # DONT
+                                telnet_state = STATE_DONT
+                            elif byte == 251:  # WILL
+                                telnet_state = STATE_WILL
+                            elif byte == 252:  # WONT
+                                telnet_state = STATE_WONT
+                            else:
+                                # Other simple IAC commands (like IP, AYT, etc.), just consume and return to normal
+                                telnet_state = STATE_NORMAL
+                        elif telnet_state in (STATE_DO, STATE_DONT, STATE_WILL, STATE_WONT):
+                            # Consume the option byte and handle it
+                            # E.g. we could acknowledge it here. Currently we just drop it.
+                            telnet_state = STATE_NORMAL
+
+                    filtered_bytes = bytes(filtered_data)
+                    if data != filtered_bytes:
+                        logging.debug(f"Handled IAC commands from TCP input. Original: {repr(data)}, Forwarding: {repr(filtered_bytes)}")
+                    data = filtered_bytes
 
                 if not data:
                     continue
