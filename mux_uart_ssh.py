@@ -107,7 +107,7 @@ class UartTcpMultiplexer:
         if self.telnet:
             async def send_iac_delayed():
                 try:
-                    await asyncio.sleep(2)
+                    await asyncio.sleep(0)
                     telnet_init = b'\xff\xfb\x01\xff\xfb\x03\xff\xfd\x03'
                     client.queue.put_nowait(telnet_init)
                     logging.debug(f"Sent IAC negotiation to [{client.peername}]")
